@@ -1,0 +1,17 @@
+{
+  "name": "bb-com-extension",
+  "type": "module",
+  "version": "0.0.1",
+  "description": "Blackbox extension to allow creation of com port based services.",
+  "main": "index.ts",
+  "scripts": {
+    "dev-build": "nodemon --watch index.ts --watch 'src/**/*.ts' --exec \"tsc && cp dist/index.js ../blackbox-cli/test/iot/.bb/extensions/bb-com-extension-index.js\"",
+    "build": "tsc"
+  },
+  "author": "Ben Millar",
+  "license": "ISC",
+  "devDependencies": {
+    "nodemon": "^3.1.10",
+    "typescript": "^5.9.3"
+  }
+}
