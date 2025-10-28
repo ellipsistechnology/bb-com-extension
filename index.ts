@@ -22,8 +22,8 @@ export default class BBComExtension {
                 'com-service': 'A service to manage serial communications.'
             },
             options: {
-                '--init <string>': 'The serial command to send to initialise the device.',
-                '--init-response <string>': 'The expected response from the device after sending the init command, given as a regular expression.',
+                '--init-commands <string>': 'The serial command to send to initialise the device.',
+                '--init-responses <string>': 'The expected response from the device after sending the init command, given as a regular expression.',
                 '--commands <string>': 'The sequence of commands to send in the macro, separated by semicolons.',
                 '--responses <string>': 'Expected responses for each command given as regular expressions, separated by semicolons.',
                 '--baud <string>': 'The baud rate for the serial connection.',
@@ -35,7 +35,7 @@ export default class BBComExtension {
     add(type: string) {
         if(type === 'com-type') {
             this.addType()
-        } else if(type === 'com-macrom') {
+        } else if(type === 'com-macro') {
             this.addMacro()
         }
     }
@@ -55,9 +55,10 @@ export default class BBComExtension {
             return
         }
         path['x-bb-com-type'] = {
+            name: this.config.name,
             baud: this.config.baud,
-            initCommand: this.config.init,
-            initResponse: this.config.initResponse
+            initCommands: this.config.initCommands,
+            initResponses: this.parseResponses(this.config.initResponses)
         }
         logp(`Added com type 'serial' at path '${this.config.path}' with baud rate ${path['x-bb-com-type'].baud}.`)
     }
@@ -84,11 +85,41 @@ export default class BBComExtension {
             logerror(`A com macro already exists at path ${this.config.path} for method ${method}.`)
             return
         }
-        path[method.toLowerCase()]['x-bb-com-macro'] = {
-            commands: this.config.commands ? this.config.commands.split(';') : [],
-            responses: this.config.responses ? this.config.responses.split(';') : [] // TODO: If regular expressions include ; then this will break.
+        if(!this.config.commands || !this.config.responses) {
+            logerror("Please provide both commands and responses for the macro using --commands and --responses.")
+            return
         }
-        logp(`Added com macro at path '${this.config.path}' with ${path['x-bb-com-macro'].commands.length} command(s).`)
+
+        // Extract the responses as regular expressions.
+        // Responses will be in the form: /response1/;/response2/;/response3/
+        // although the semi-colons are optional.
+        const macroDef = {
+            commands: this.config.commands.split(';'),
+            responses: this.parseResponses(this.config.responses)
+        }
+        path[method.toLowerCase()]['x-bb-com-macro'] = macroDef
+        logp(`Added com macro at path '${this.config.path}' with ${macroDef.commands.length} command(s).`)
+    }
+
+    private parseResponses(responsesStr: any) {
+        const regex = /(\/[^\/]+\/)/gm
+        let m
+        const responses: string[] = []
+        while ((m = regex.exec(responsesStr)) !== null) {
+            // This is necessary to avoid infinite loops with zero-width matches
+            if (m.index === regex.lastIndex) {
+                regex.lastIndex++
+            }
+
+            // The result can be accessed through the `m`-variable.
+            m.forEach((match, groupIndex) => {
+                console.log(`Found match, group ${groupIndex}: ${match}`)
+                if (groupIndex === 1) {
+                    responses.push(match)
+                }
+            })
+        }
+        return responses
     }
 
     delete(type: string) {
