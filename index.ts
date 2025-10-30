@@ -1,3 +1,7 @@
+import fs from 'fs'
+import comPortTemplate from './src/ComPortTemplate.js'
+import serviceTemplate from './src/serviceTemplate.js'
+
 function logp(message: string) {
     console.log(message)
 }
@@ -57,7 +61,7 @@ export default class BBComExtension {
         path['x-bb-com-type'] = {
             name: this.config.name,
             baud: this.config.baud,
-            initCommands: this.config.initCommands,
+            initCommands: this.config.initCommands.split(';'),
             initResponses: this.parseResponses(this.config.initResponses)
         }
         logp(`Added com type 'serial' at path '${this.config.path}' with baud rate ${path['x-bb-com-type'].baud}.`)
@@ -123,10 +127,65 @@ export default class BBComExtension {
     }
 
     delete(type: string) {
-        console.log(`Deleting com of type '${type}`);
+        console.log(`Deleting com of type '${type} - NOT YET IMPLEMENTED.`);
     }
 
     generate(type: string) {
-        console.log(`Generating com of type '${type}`);
+        if(type !== 'com-service') {
+            logerror(`Generation for type '${type}' not supported.`)
+            return
+        }
+        console.log(`Generating service for com of type '${type}...' `)
+
+        // Create ComPort.ts if it doesn't exist:
+        if(!fs.existsSync('gensrc/ComPort.ts')) {
+            fs.writeFileSync('gensrc/ComPort.ts', comPortTemplate())
+        }
+
+        // Add serialport to package.json dependencies if not already present:
+        const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf-8'))
+        if(!packageJson.dependencies) {
+            packageJson.dependencies = {}
+        }
+        if(!packageJson.dependencies['serialport']) {
+            packageJson.dependencies['serialport'] = '^13.0.0'
+            fs.writeFileSync('package.json', JSON.stringify(packageJson, null, 2))
+            logp("Added 'serialport' to package.json dependencies.")
+        }
+
+        // Generate services for each path with a com-type:
+        Object.keys(this.openapiDoc.paths).forEach( path => {
+            if(!this.openapiDoc.paths[path]['x-bb-com-type']) {
+                return
+            }
+            const serviceName = path.substring(path.lastIndexOf('/')+1)
+            const serviceFileName = `src/${serviceName.charAt(0).toUpperCase() + serviceName.slice(1)}Service.ts`
+            if(fs.existsSync(serviceFileName)) {
+                logp(`Service file ${serviceFileName} already exists - skipping generation.`)
+                return
+            }
+
+            const serviceCode = serviceTemplate(this.openapiDoc, {
+                serviceName,
+                bbName: this.openapiDoc.paths[path]['x-bb-com-type'].name,
+                methods: 
+                    Object.keys(this.openapiDoc.paths[path])
+                    .filter((method:string) => ['get','post','put','delete','patch'].includes(method.toLowerCase()))
+                    .reduce( (methods: any[], method) => {
+                        if(this.openapiDoc.paths[path][method]['x-bb-com-macro']) {
+                            const operationId = this.openapiDoc.paths[path][method].operationId
+                            methods.push({
+                                path, 
+                                method,
+                                operationId
+                            })
+                        }
+                        return methods
+                    }, [])
+            })
+            fs.writeFileSync(serviceFileName, serviceCode)
+
+            logp(`Generated com service class ${serviceFileName}.`)
+        })
     }
 }

@@ -5,13 +5,19 @@
   "description": "Blackbox extension to allow creation of com port based services.",
   "main": "index.ts",
   "scripts": {
-    "dev-build": "nodemon --watch index.ts --watch 'src/**/*.ts' --exec \"tsc && cp dist/index.js ../blackbox-cli/test/iot/.bb/extensions/bb-com-extension-index.js\"",
-    "build": "tsc"
+    "dev-build": "nodemon --watch index.ts --watch 'src/serviceTemplate.ts' --exec \"tsc && webpack && cp bundle/index.js ../blackbox-cli/test/iot/.bb/extensions/bb-com-extension-index.js\"",
+    "build": "tsc && webpack && cp bundle/index.js ../blackbox-cli/test/iot/.bb/extensions/bb-com-extension-index.js"
   },
   "author": "Ben Millar",
   "license": "ISC",
   "devDependencies": {
+    "@types/node": "^24.9.2",
+    "@types/webpack-node-externals": "^3.0.4",
     "nodemon": "^3.1.10",
-    "typescript": "^5.9.3"
+    "ts-loader": "^9.5.4",
+    "typescript": "^5.9.3",
+    "webpack": "^5.102.1",
+    "webpack-cli": "^6.0.1",
+    "webpack-node-externals": "^3.0.0"
   }
 }
