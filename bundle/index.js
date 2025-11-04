@@ -16,7 +16,7 @@ function comPortTemplate() {
     return `import { SerialPort } from 'serialport';
 import {autowired, named} from 'ellipsis-ioc'
 
-class ComType {
+export class ComType {
   constructor(
     public name: string,
     public baud: number,
@@ -29,12 +29,12 @@ class ComType {
   toString() {
     return \`ComType(name='\${this.name}', baud=\${this.baud})\`
     + \`[\${Object.entries(this.methods).map(([m, macros]) => (
-      \`\n\t\${m}: [\${macros.map(cm => cm.toString()).join(', ')}]\`
-    )).join('')}\n]\`
+      \`\\n\t\${m}: [\${macros.map(cm => cm.toString()).join(', ')}]\`
+    )).join('')}\\n]\`
   }
 }
 
-class ComMacro {
+export class ComMacro {
   constructor(
     public command: string,
     public response: RegExp
@@ -45,7 +45,7 @@ class ComMacro {
   }
 }
 
-class ComPort {
+export class ComPort {
   private port: SerialPort | null = null
   private readMatch?: RegExp
   private readComplete = false
@@ -55,7 +55,7 @@ class ComPort {
   type: ComType | null = null
   lastError: string | null = null
   timeout: number = 5000 // TODO: Allow setting this at the service level and at the method level.
-  lineEnding: string = '\n' // TODO: Allow setting this at the service level and at the method level.
+  lineEnding: string = '\\n' // TODO: Allow setting this at the service level and at the method level.
 
   // General port info:
   manufacturer?: string
@@ -243,41 +243,107 @@ class ComPort {
     console.log(\`Port \${this.path} is now available.\`)
   }
 
-
   /**
    * Executes the macros for the given method while the responses are matched.
    * After execution the com port's state will be 'background'.
    * @param method The method name to execute.
+   * @param params The parameters to replace in the macro commands.
    * @return An array of the responses from each command.
    */
-  async send(method: string): Promise<string[]>
+  async send(method: string, params?: {[name: string]: any}): Promise<string[]>
   
   /**
    * Executes the given macros while the responses are matched.
    * After execution the com port's state will be 'background'.
    * @param macros The array of macros to execute.
+   * @param params The parameters to replace in the macro commands.
    * @return An array of the responses from each command.
    */
-  async send(macros: ComMacro[]): Promise<string[]>
+  async send(macros: ComMacro[], params?: {[name: string]: any}): Promise<string[]>
   
-  async send(macros: ComMacro[]|string): Promise<string[]> {
+  async send(macros: ComMacro[]|string, params?: {[name: string]: any}): Promise<string[]> {
+    
     if(typeof macros === 'string') {
       if(!this.type) {
         throw new Error(\`Cannot send to com port \${this.path} by method without a type.\`)
       }
       console.log(\`Sending macros for method '\${macros}' on port \${this.path}.\`)
-      return this.send(this.type.methods[macros])
+      return this.send(this.type.methods[macros], params)
+    }
+
+    if(!macros || macros.length === 0) {
+      throw new Error(\`No macros provided to send to com port \${this.path}.\`)
     }
 
     // Ensure correct state:
-    if(this.state === 'busy') {
-      throw new Error(\`Com port \${this.path} is busy.\`)
-    }
-    if(this.state === 'connecting') {
-      throw new Error(\`Com port not read - please wait for connection to complete before sending.\`)
-    }
-    if(this.state === 'closed') {
-      throw new Error(\`Com port is closed - please connect before sending.\`)
+    // if(this.state === 'busy') {
+    //   throw new Error(\`Com port \${this.path} is busy.\`)
+    // }
+    // if(this.state === 'connecting') {
+    //   throw new Error(\`Com port not read - please wait for connection to complete before sending.\`)
+    // }
+    // if(this.state === 'closed') {
+    //   throw new Error(\`Com port is closed - please connect before sending.\`)
+    // }
+    
+    // Replace parameters in each macro command:
+    if(params) {
+      macros = macros.map( m => {
+        let command = m.command
+
+        // Extract all parameters in the command.
+        // These have the form {param}:
+        const paramRegex = \/{([^}]+)}\/gm
+        let match
+        const commandParams: string[] = []
+        while ((match = paramRegex.exec(command)) !== null) {
+          // This is necessary to avoid infinite loops with zero-width matches
+          if (match.index === paramRegex.lastIndex) {
+            paramRegex.lastIndex++
+          }
+
+          // The result can be accessed through the 'match'-variable.
+          match.forEach((m, groupIndex) => {
+            if (groupIndex === 1) {
+              commandParams.push(m)
+            }
+          })
+        }
+
+        // Replace each parameter with its value:
+        commandParams.forEach( p => {
+          const re = new RegExp(\`{\${p}}\`, 'g')
+          let val
+
+          // Resolve nested parameters:
+          if(p.includes('.')) {
+            val = params[p.substring(0, p.indexOf('.'))] // get top-level value
+            const keys = p.split('.')
+            for(let key of keys) {
+              // Check for the property:
+              if(val && val.hasOwnProperty(key)) {
+                val = val[key as any]
+              } 
+              // Check if the property has an array index:
+              else if(key.endsWith(']') && key.includes('[') ) {
+                const arrKey = key.substring(0, key.indexOf('[')) as any
+                const indexStr = key.substring(key.indexOf('[')+1, key.length-1)
+                const index = parseInt(indexStr)
+                if(val && val.hasOwnProperty(arrKey) && Array.isArray(val[arrKey]) && val[arrKey].length > index) {
+                  val = val[arrKey][index]
+                }
+              } 
+              // else not found.
+            }
+          } else {
+            val = params[p]
+          }
+          
+          command = command.replaceAll(re, val)
+        })
+
+        return new ComMacro(command, m.response)
+      })
     }
 
     // Wait for port the become available:
@@ -338,7 +404,7 @@ class ComPort {
 }
   
 @named('com-manager')
-class ComManager {
+export class ComManager {
   ports: ComPort[] = []
   types: ComType[] = []
 
@@ -408,327 +474,99 @@ class ComManager {
             }
           }
         })
-        console.log(\`Found ports: \n\t\${this.ports.map(p => p.toString()).join(',\n\t')}\`);
+        console.log(\`Found ports: \\n\\t\${this.ports.map(p => p.toString()).join(',\\n\\t')}\`);
     } catch (error: any) {
         console.error(\`Error scanning serial ports: \${error.message}\`)
     }
   }
 
+  /**
+   * Load the com types from the OpenAPI document.
+   * @returns 
+   */
   loadTypes() {
-    Object.keys(this.openapiDoc.paths).forEach( (p:any) => {
-      const path = this.openapiDoc.paths[p]
-      if(path['x-bb-com-type']) {
-        let baud = path['x-bb-com-type'].baud
-        if(typeof baud === 'string') {
-          baud = parseInt(baud)
-        }
+    if(!this.openapiDoc['x-bb-com-types']) {
+      console.log("No com types found in OpenAPI document.")
+      return
+    }
 
-        // Methd macros:
-        const methods = {} as {[method: string]: any}
+    // Iterate over all com types in the OpenAPI document:
+    Object.keys(this.openapiDoc['x-bb-com-types']).forEach( (name: string) => {
+      const comType = this.openapiDoc['x-bb-com-types'][name]
+
+      // Ensure the baud rate is a number:
+      if(typeof comType.baud === 'string') {
+        comType.baud = parseInt(comType.baud)
+      }
+
+      // Extract all macros that specify this com type by name:
+      const macros = {} as {[method: string]: ComMacro[]}
+      Object.values(this.openapiDoc.paths).forEach( (path: any) => {
         Object.keys(path)
-        .filter(m => ['get', 'post', 'put', 'patch', 'delete'].includes(m))
-        .filter(m => path[m]['x-bb-com-macro'])
-        .forEach(m => {
-          if(!path[m]['x-bb-com-macro'].commands ||
-            !path[m]['x-bb-com-macro'].responses ||
-            path[m]['x-bb-com-macro'].commands.length !== path[m]['x-bb-com-macro'].responses.length) 
+        .filter(method => ['get', 'post', 'put', 'patch', 'delete'].includes(method))
+        .filter(method => path[method]['x-bb-com-macro'])
+        .forEach(method => {
+          if(!path[method]['x-bb-com-macro'].commands ||
+            !path[method]['x-bb-com-macro'].responses ||
+            path[method]['x-bb-com-macro'].commands.length !== path[method]['x-bb-com-macro'].responses.length) 
           {
-            throw new Error(\`x-bb-com-macro commands and responses must be arrays of the same length in openapi.json at path \${p}.\`)
+            throw new Error('x-bb-com-macro commands and responses must be arrays of the same length in openapi.json at path '+path+'/'+method+'.')
           }
-          methods[m] = (<string[]>path[m]['x-bb-com-macro'].commands).map((c, i) => (
-            new ComMacro(c, new RegExp(path[m]['x-bb-com-macro'].responses[i], 'gm'))
+          if(!path[method].operationId) {
+            throw new Error(\`OperationId missing for method \${method} at path \${path} in openapi.json.\`)
+          }
+          macros[path[method].operationId] = (path[method]['x-bb-com-macro'].commands as string[]).map((c, i) => (
+            new ComMacro(c, new RegExp(path[method]['x-bb-com-macro'].responses[i].replace(/^\/|\/$/g, ''), 'gm'))
           ))
         })
+      })
 
-        // Init macro:
-        path['x-bb-com-type'].initCommands.forEach((cmd: string, i: number) => {
-          if(!methods.init) {
-            methods.init = []
-          }
-          methods.init.push(
-            new ComMacro(
-              cmd,
-              new RegExp(path['x-bb-com-type'].initResponses[i].replace(/^\/|\/$/g, '')) // remove leading and trailing slashes
-            )
-          )
-        })
-        if(!methods.init) {
-          throw new Error(\`Com type at path \${p} is missing init commands.\`)
-        }
-
-        const comType = new ComType(
-          path['x-bb-com-type'].name,
-          baud,
-          methods as {[method: string]: ComMacro[], init: ComMacro[]}
-        )
-        console.log(\`Loaded com type \${comType.toString()}\`);
-        
-        this.types.push(comType)
+      // Init macro:
+      if(!comType.initCommands || comType.initCommands.length === 0) {
+        throw new Error(\`Com type '\${name}' is missing init commands.\`)
       }
+      if(!comType.initResponses || comType.initResponses.length === 0) {
+        throw new Error(\`Com type '\${name}' is missing init responses.\`)
+      }
+      if(comType.initCommands.length !== comType.initResponses.length) {
+        throw new Error(\`Com type '\${name}' init commands and responses must be arrays of the same length.\`)
+      }
+      macros.init = []
+      comType.initCommands.forEach((cmd: string, i: number) => {
+        macros.init.push(
+          new ComMacro(
+            cmd,
+            new RegExp(comType.initResponses[i].replace(/^\/|\/$/g, '')) // remove leading and trailing slashes
+          )
+        )
+      })
+      
+      // Add the com type:
+      this.types.push(new ComType(
+        name,
+        comType.baud,
+        macros as {[method: string]: ComMacro[], init: ComMacro[]}
+      ))
+      console.log(\`Loaded com type \${comType.toString()}\`);
     })
   }
-}
-`;
-}
 
-
-/***/ }),
-
-/***/ "./dist/src/serviceTemplate.js":
-/*!*************************************!*\
-  !*** ./dist/src/serviceTemplate.js ***!
-  \*************************************/
-/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
-
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   "default": () => (/* export default binding */ __WEBPACK_DEFAULT_EXPORT__)
-/* harmony export */ });
-/* harmony import */ var _utils_js__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! ./utils.js */ "./dist/src/utils.js");
-
-function methodType(oasDoc, path, method, schemaToClass) {
-    // If there is no response content then default to 'any':
-    if (!oasDoc.paths[path][method].responses?.['200']?.content) {
-        return 'void';
+  async list(type: string, operationId: string, params: {[key: string]: any}): Promise<string[][]> {
+    const results: string[][] = []
+    const ports = this.ports.filter(p => p.type?.name === type)
+    for(let index = 0; index < ports.length; index++) {
+        results.push(await this.send(type, index, operationId, params))
     }
-    // Get the schema for the 200 response:
-    const schema = oasDoc.paths[path][method].responses['200'].content['application/json'].schema;
-    let allOf;
-    if (Array.isArray(schema.allOf))
-        allOf = schema.allOf;
-    else if (schema.type === 'array' && schema.items && schema.items.allOf)
-        allOf = schema.items.allOf;
-    let type = '';
-    if (allOf) {
-        type = allOf
-            .map((childSchema) => schemaToClass[childSchema['$ref']])
-            .join('&');
-    }
-    else if (schema.type === 'array' && schema.items && schema.items['$ref']) {
-        type = schemaToClass[schema.items['$ref']];
-    }
-    else if (schema['$ref']) {
-        type = schemaToClass[schema['$ref']];
-    }
-    else if (typeof schema.type === 'string') {
-        type = schema.type;
-    }
-    if (type && schema.type === 'array') {
-        return type + '[]';
-    }
-    else if (type) {
-        return type;
-    }
-    else {
-        console.log(`No type found for ${method} ${path}, defaulting to 'void'.`);
-        return 'void';
-    }
-}
-/* harmony default export */ function __WEBPACK_DEFAULT_EXPORT__(openapiDoc, { bbName, serviceName, methods }) {
-    const className = (0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.toCammelCase)(serviceName);
-    const classVarName = (0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.toCammelCase)(serviceName, false);
-    const schemaToClass = (0,_utils_js__WEBPACK_IMPORTED_MODULE_0__.schemaToClassMap)(openapiDoc);
-    let imports = '';
-    new Set(methods // use a set to remove duplicates
-        .map(method => methodType(openapiDoc, method.path, method.method, schemaToClass)) // extract types from methods
-        .filter(type => type) // remove empty - shouldn't happen???
-        .filter(type => !_utils_js__WEBPACK_IMPORTED_MODULE_0__.jsonTypes.includes(type)) // remove primitives
-        .map((type) => type.endsWith('[]') ? type.substring(0, type.length - 2) : type)
-        .reduce((classes, type) => classes.concat(type.split('&')), []) // split Type1&Type2
-        .reduce((classes, type) => classes.concat(type.split('|')), []) // split Type1|Type2
-    ).forEach(type => imports += `import ${type} from '${_utils_js__WEBPACK_IMPORTED_MODULE_0__.reservedClasses.includes(type) ? '../gensrc/' : './'}${type}.js'\n`);
-    return `import {serviceClass, autowired} from 'ellipsis-ioc'
-${imports}
-import { ComManager } from '../gensrc/ComPort.js'
-
-@serviceClass('${classVarName}')
-export class ${className}Service {
-
-  @autowired('openapi-doc')
-  openapiDoc:any
-
-  @autowired('com-manager')
-  comManager!: ComManager
-
-  constructor() {
+    return results
   }
-  ${methods.map(method => {
-        const pathParams = (method.path.match(/{(.*?)}/g) || []).map((p) => p.substring(1, p.length - 1));
-        if (['post', 'put', 'patch'].includes(method.method)) {
-            pathParams.push('data');
-        }
-        const pathParamsList = pathParams.length > 0 ? '{' + pathParams.join(', ') + '}' : '';
-        const serviceType = openapiDoc.paths[method.path][method.method].requestBody?.content?.['application/json']?.schema?.$ref ?
-            schemaToClass[openapiDoc.paths[method.path][method.method].requestBody.content['application/json'].schema.$ref] :
-            schemaToClass[openapiDoc.paths[method.path][method.method].requestBody?.content?.['application/json']?.schema?.type] ?
-                schemaToClass[openapiDoc.paths[method.path][method.method].requestBody.content['application/json'].schema.type] :
-                'any';
-        const pathParamTypes = pathParams.length > 0 ? '{' + pathParams.map(p => `${p}: ${p === 'data' ? serviceType : p.endsWith('index') ? 'number' : 'string'}`).join(', ') + '}' : '';
-        const returnType = methodType(openapiDoc, method.path, method.method, schemaToClass);
-        return `
-  async ${method.operationId}(${pathParamsList}${pathParams.length > 0 ? ': ' : ''}${pathParamTypes}): Promise<${returnType}> {
-    const port = await this.comManager.getComPort('${bbName}', 0)
-    const responses = await port.send('${method.method}')
 
-    // TODO: Process responses to extract data.
-
-    throw new Error(\`${method.operationId} not yet implemented.\`)
-  }`;
-    }).join('\n')}
+  async send(type: string, index: number, operationId: string, params: {[key: string]: any}): Promise<string[]> {
+    const port = await this.getComPort(type, index)
+    const responses = await port.send(operationId, params)
+    return responses
+  }
 }
 `;
-}
-
-
-/***/ }),
-
-/***/ "./dist/src/utils.js":
-/*!***************************!*\
-  !*** ./dist/src/utils.js ***!
-  \***************************/
-/***/ ((__unused_webpack___webpack_module__, __webpack_exports__, __webpack_require__) => {
-
-__webpack_require__.r(__webpack_exports__);
-/* harmony export */ __webpack_require__.d(__webpack_exports__, {
-/* harmony export */   CONFIG_FILENAME: () => (/* binding */ CONFIG_FILENAME),
-/* harmony export */   OPENAPI_FILENAME: () => (/* binding */ OPENAPI_FILENAME),
-/* harmony export */   PACKAGE_FILENAME: () => (/* binding */ PACKAGE_FILENAME),
-/* harmony export */   extractPathParams: () => (/* binding */ extractPathParams),
-/* harmony export */   get: () => (/* binding */ get),
-/* harmony export */   httpMethods: () => (/* binding */ httpMethods),
-/* harmony export */   jsonTypes: () => (/* binding */ jsonTypes),
-/* harmony export */   makeContentSchema: () => (/* binding */ makeContentSchema),
-/* harmony export */   pathParamRegex: () => (/* binding */ pathParamRegex),
-/* harmony export */   reservedClasses: () => (/* binding */ reservedClasses),
-/* harmony export */   reservedTypes: () => (/* binding */ reservedTypes),
-/* harmony export */   schemaToClassMap: () => (/* binding */ schemaToClassMap),
-/* harmony export */   toCammelCase: () => (/* binding */ toCammelCase)
-/* harmony export */ });
-/* harmony import */ var node_http__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! node:http */ "node:http");
-/* harmony import */ var node_https__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! node:https */ "node:https");
-// TODO: Move this to a shared package for blackbox-cli and extensions.
-
-
-/**
- * Convert a string to CamelCase.
- * @param name The string to convert.
- * @param startUpper Whether to start with an upper case letter. Default true.
- * @returns The CamelCased string.
- */
-function toCammelCase(name, startUpper = true) {
-    if (jsonTypes.includes(name) || name.endsWith('[]') && jsonTypes.includes(name.substring(0, name.length - 2))) {
-        return name;
-    }
-    else {
-        const cc = name.replace(/([-_][a-z])/ig, ($1) => {
-            return $1.toUpperCase()
-                .replace('-', '')
-                .replace('_', '');
-        });
-        if (startUpper) {
-            return cc.charAt(0).toUpperCase() + cc.substring(1);
-        }
-        else {
-            return cc;
-        }
-    }
-    // name.split('-')
-    //   .map((part, i) => i > 0 || startUpper ? part.charAt(0).toUpperCase() + part.substring(1) : part)
-    //   .join('')
-}
-/**
- * Create an OpenAPI content schema for a given datatype using either
- * a native type or a $ref to a specified type.
- * @param datatype
- * @returns
- */
-function makeContentSchema(datatype) {
-    return jsonTypes.includes(datatype) ?
-        { "type": datatype } :
-        { "$ref": "#/components/schemas/" + datatype };
-}
-const OPENAPI_FILENAME = "openapi.json";
-const CONFIG_FILENAME = "blackbox.json";
-const PACKAGE_FILENAME = "package.json";
-const jsonTypes = [
-    "string",
-    "integer",
-    "number",
-    "boolean",
-    "array",
-    "object",
-    "any",
-    "void"
-];
-const httpMethods = [
-    "get",
-    "put",
-    "post",
-    "delete",
-    "options",
-    "patch"
-];
-const reservedTypes = [
-    "metadata",
-    "index-response",
-    "service",
-    "service-list",
-    "oas3schema"
-];
-reservedTypes.push(...jsonTypes);
-const reservedClasses = reservedTypes.map(t => toCammelCase(t));
-// export const importMap = {
-//   Service: 'blackbox-services',
-//   ServiceLinks: 'blackbox-services',
-//   ServiceLink: 'blackbox-services',
-//   ServiceType: 'blackbox-services',
-// }
-const pathParamRegex = /\{([^}]+)\}/g;
-/**
- * Extract the path parameters from a path string.
- * @param path The path string.
- * @returns An array of parameter names.
- */
-function extractPathParams(path) {
-    const params = [];
-    const regex = pathParamRegex;
-    let match;
-    while ((match = regex.exec(path)) !== null) {
-        params.push(`${match[1]}`);
-    }
-    return params;
-}
-function schemaToClassMap(oasDoc) {
-    return Object.keys(oasDoc.components.schemas).reduce((map, schemaName) => {
-        // Remove non-words (e.g. hyphens):
-        const tokens = schemaName.match(/\w+/g);
-        if (!tokens)
-            throw new Error(`Invalid schema found '${schemaName}'`);
-        // Convert to camel-case:
-        map[`#/components/schemas/${schemaName}`] = tokens.reduce((className, t) => className + t.charAt(0).toUpperCase() + t.substring(1), '');
-        return map;
-    }, {});
-}
-function get(url) {
-    return new Promise((resolve, reject) => {
-        (url.startsWith('https') ? node_https__WEBPACK_IMPORTED_MODULE_1__ : node_http__WEBPACK_IMPORTED_MODULE_0__).get(url, (res) => {
-            let data = '';
-            res.on('data', (chunk) => {
-                data += chunk;
-            });
-            res.on('end', () => {
-                resolve({
-                    status: res.statusCode,
-                    statusText: res.statusMessage,
-                    headers: res.headers,
-                    data: JSON.parse(data)
-                });
-            });
-            res.on('error', (err) => {
-                reject(err);
-            });
-        });
-    });
 }
 
 
@@ -741,26 +579,6 @@ function get(url) {
 /***/ ((module) => {
 
 module.exports = __WEBPACK_EXTERNAL_createRequire_require("fs");
-
-/***/ }),
-
-/***/ "node:http":
-/*!****************************!*\
-  !*** external "node:http" ***!
-  \****************************/
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire_require("node:http");
-
-/***/ }),
-
-/***/ "node:https":
-/*!*****************************!*\
-  !*** external "node:https" ***!
-  \*****************************/
-/***/ ((module) => {
-
-module.exports = __WEBPACK_EXTERNAL_createRequire_require("node:https");
 
 /***/ })
 
@@ -832,8 +650,6 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */ });
 /* harmony import */ var fs__WEBPACK_IMPORTED_MODULE_0__ = __webpack_require__(/*! fs */ "fs");
 /* harmony import */ var _src_ComPortTemplate_js__WEBPACK_IMPORTED_MODULE_1__ = __webpack_require__(/*! ./src/ComPortTemplate.js */ "./dist/src/ComPortTemplate.js");
-/* harmony import */ var _src_serviceTemplate_js__WEBPACK_IMPORTED_MODULE_2__ = __webpack_require__(/*! ./src/serviceTemplate.js */ "./dist/src/serviceTemplate.js");
-
 
 
 function logp(message) {
@@ -858,7 +674,7 @@ class BBComExtension {
             types: {
                 'com-type': 'Type of serial device.',
                 'com-macro': 'A macro to send over the serial link.',
-                'com-service': 'A service to manage serial communications.'
+                'com-utils': 'Helper utilities for accessing serial communications.'
             },
             options: {
                 '--init-commands <string>': 'The serial command to send to initialise the device.',
@@ -882,23 +698,15 @@ class BBComExtension {
      * bb add com-type --path /serial --baud 9600 --init "INIT_CMD" --init-response "/OK/"
      */
     addType() {
-        if (!this.config.path) {
-            // TODO: Share the types and utils from blackbox-cli.
-            logerror("Please provide a path for the com using --path.");
-            return;
+        if (!this.openapiDoc['x-bb-com-types']) {
+            this.openapiDoc['x-bb-com-types'] = {};
         }
-        const path = this.openapiDoc.paths[this.config.path];
-        if (!path) {
-            logerror(`Path ${this.config.path} not found in OpenAPI document.`);
-            return;
-        }
-        path['x-bb-com-type'] = {
-            name: this.config.name,
+        this.openapiDoc['x-bb-com-types'][this.config.name] = {
             baud: this.config.baud,
             initCommands: this.config.initCommands.split(';'),
             initResponses: this.parseResponses(this.config.initResponses)
         };
-        logp(`Added com type 'serial' at path '${this.config.path}' with baud rate ${path['x-bb-com-type'].baud}.`);
+        logp(`Added com type '${this.config.name}'.`);
     }
     /**
      * bb add com-macro --path init --commands "CMD1;CMD2;CMD3" --responses "/RESP1/;/RESP2/;/RESP3/"
@@ -908,7 +716,12 @@ class BBComExtension {
             logerror("Please provide a path for the macro using --path.");
             return;
         }
-        const path = this.openapiDoc.paths[this.config.path];
+        const openApiPath = this.blackboxToOpenapiPath(this.config.path);
+        if (!openApiPath) {
+            logerror(`Path ${this.config.path} not found in OpenAPI document.`);
+            return;
+        }
+        const path = this.openapiDoc.paths[openApiPath];
         if (!path) {
             logerror(`Path ${this.config.path} not found in OpenAPI document.`);
             return;
@@ -926,47 +739,47 @@ class BBComExtension {
             logerror("Please provide both commands and responses for the macro using --commands and --responses.");
             return;
         }
-        // Extract the responses as regular expressions.
-        // Responses will be in the form: /response1/;/response2/;/response3/
-        // although the semi-colons are optional.
         const macroDef = {
+            name: this.config.name,
             commands: this.config.commands.split(';'),
             responses: this.parseResponses(this.config.responses)
         };
         path[method.toLowerCase()]['x-bb-com-macro'] = macroDef;
         logp(`Added com macro at path '${this.config.path}' with ${macroDef.commands.length} command(s).`);
     }
+    /**
+     * Extract the responses as regular expressions.
+     * Responses will be in the form: /response1/;/response2/;/response3/
+     * @param responsesStr
+     * @returns
+     */
     parseResponses(responsesStr) {
-        const regex = /(\/[^\/]+\/)/gm;
-        let m;
-        const responses = [];
-        while ((m = regex.exec(responsesStr)) !== null) {
-            // This is necessary to avoid infinite loops with zero-width matches
-            if (m.index === regex.lastIndex) {
-                regex.lastIndex++;
-            }
-            // The result can be accessed through the `m`-variable.
-            m.forEach((match, groupIndex) => {
-                console.log(`Found match, group ${groupIndex}: ${match}`);
-                if (groupIndex === 1) {
-                    responses.push(match);
-                }
-            });
+        if (!responsesStr.startsWith('/') || !responsesStr.endsWith('/')) {
+            logerror("Responses must be provided as regular expressions enclosed in slashes (/).");
+            return [];
         }
-        return responses;
+        return responsesStr.substring(1, responsesStr.length - 1).split('/;/').map((resp) => resp.trim());
     }
     delete(type) {
         console.log(`Deleting com of type '${type} - NOT YET IMPLEMENTED.`);
     }
+    blackboxToOpenapiPath(bbPath) {
+        for (let p in this.openapiDoc.paths) {
+            if (p.replaceAll(/\{[^}]+\}/gm, '#') === bbPath) {
+                return p;
+            }
+        }
+        return undefined;
+    }
     generate(type) {
-        if (type !== 'com-service') {
+        if (type !== 'com-utils') {
             logerror(`Generation for type '${type}' not supported.`);
             return;
         }
-        console.log(`Generating service for com of type '${type}...' `);
         // Create ComPort.ts if it doesn't exist:
         if (!fs__WEBPACK_IMPORTED_MODULE_0__.existsSync('gensrc/ComPort.ts')) {
             fs__WEBPACK_IMPORTED_MODULE_0__.writeFileSync('gensrc/ComPort.ts', (0,_src_ComPortTemplate_js__WEBPACK_IMPORTED_MODULE_1__["default"])());
+            logp("Generated gensrc/ComPort.ts for serial communications.");
         }
         // Add serialport to package.json dependencies if not already present:
         const packageJson = JSON.parse(fs__WEBPACK_IMPORTED_MODULE_0__.readFileSync('package.json', 'utf-8'));
@@ -976,39 +789,74 @@ class BBComExtension {
         if (!packageJson.dependencies['serialport']) {
             packageJson.dependencies['serialport'] = '^13.0.0';
             fs__WEBPACK_IMPORTED_MODULE_0__.writeFileSync('package.json', JSON.stringify(packageJson, null, 2));
-            logp("Added 'serialport' to package.json dependencies.");
+            logp("Added 'serialport' to package.json dependencies.\nPlease run 'npm install' to install the new dependency.");
         }
-        // Generate services for each path with a com-type:
-        Object.keys(this.openapiDoc.paths).forEach(path => {
-            if (!this.openapiDoc.paths[path]['x-bb-com-type']) {
-                return;
-            }
-            const serviceName = path.substring(path.lastIndexOf('/') + 1);
-            const serviceFileName = `src/${serviceName.charAt(0).toUpperCase() + serviceName.slice(1)}Service.ts`;
-            if (fs__WEBPACK_IMPORTED_MODULE_0__.existsSync(serviceFileName)) {
-                logp(`Service file ${serviceFileName} already exists - skipping generation.`);
-                return;
-            }
-            const serviceCode = (0,_src_serviceTemplate_js__WEBPACK_IMPORTED_MODULE_2__["default"])(this.openapiDoc, {
-                serviceName,
-                bbName: this.openapiDoc.paths[path]['x-bb-com-type'].name,
-                methods: Object.keys(this.openapiDoc.paths[path])
-                    .filter((method) => ['get', 'post', 'put', 'delete', 'patch'].includes(method.toLowerCase()))
-                    .reduce((methods, method) => {
-                    if (this.openapiDoc.paths[path][method]['x-bb-com-macro']) {
-                        const operationId = this.openapiDoc.paths[path][method].operationId;
-                        methods.push({
-                            path,
-                            method,
-                            operationId
-                        });
+        /*
+                // Generate services for each path with a com-type:
+                Object.keys(this.openapiDoc.paths).forEach( path => {
+        
+                    // Skip if the service file already exists:
+                    const serviceName = path.substring(path.lastIndexOf('/')+1)
+                    const serviceFileName = `src/${serviceName.charAt(0).toUpperCase() + serviceName.slice(1)}Service.ts`
+                    if(fs.existsSync(serviceFileName)) {
+                        logp(`Service file ${serviceFileName} already exists - skipping generation.`)
+                        return
                     }
-                    return methods;
-                }, [])
-            });
-            fs__WEBPACK_IMPORTED_MODULE_0__.writeFileSync(serviceFileName, serviceCode);
-            logp(`Generated com service class ${serviceFileName}.`);
-        });
+        
+                    const parentPathObj = this.openapiDoc.paths[path]
+                    const comType = parentPathObj['x-bb-com-type']
+                    if(!comType) {
+                        return
+                    }
+        
+                    // Extract methods for the parent service node:
+                    const methods = Object.keys(parentPathObj)
+                        .filter((method: string) => ['get', 'post', 'put', 'delete', 'patch'].includes(method.toLowerCase()))
+                        .reduce((methods: any[], method) => {
+                            if (parentPathObj[method]['x-bb-com-macro']) {
+                                const operationId = parentPathObj[method].operationId
+                                methods.push({
+                                    path,
+                                    method,
+                                    operationId
+                                })
+                            }
+                            return methods
+                        }, [])
+        
+                    // Extract methods for the child object nodes:
+                    if(parentPathObj['x-bb-service']?.access !== 'unique') {
+                        Object.keys(this.openapiDoc.paths)
+                            .filter( p => p.startsWith(path+'/') ) // child nodes
+                            .forEach( p => {
+                                const pathObj = this.openapiDoc.paths[p]
+                                Object.keys(pathObj)
+                                .filter((method: string) => ['get', 'post', 'put', 'delete', 'patch'].includes(method.toLowerCase()))
+                                .filter( method => !pathObj[method]['x-bb-com-macro']?.name || pathObj[method]['x-bb-com-macro'].name === comType.name) // Either the name is not specific (default to parent) or it matches the com-type name of the parent.
+                                .forEach( method => {
+                                    if (pathObj[method]['x-bb-com-macro']) {
+                                        const operationId = pathObj[method].operationId
+                                        methods.push({
+                                            path: p,
+                                            method,
+                                            operationId
+                                        })
+                                    }
+                                })
+                            })
+                    }
+        
+                    // Generate service code:
+                    const serviceCode = serviceTemplate(this.openapiDoc, {
+                        serviceName,
+                        bbName: comType.name,
+                        methods: methods
+                    })
+        
+                    // Write service file:
+                    fs.writeFileSync(serviceFileName, serviceCode)
+                    logp(`Generated com service class ${serviceFileName}.`)
+                })*/
     }
 }
 

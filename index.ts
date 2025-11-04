@@ -23,7 +23,7 @@ export default class BBComExtension {
             types: {
                 'com-type': 'Type of serial device.', 
                 'com-macro': 'A macro to send over the serial link.',
-                'com-service': 'A service to manage serial communications.'
+                'com-utils': 'Helper utilities for accessing serial communications.'
             },
             options: {
                 '--init-commands <string>': 'The serial command to send to initialise the device.',
@@ -48,23 +48,15 @@ export default class BBComExtension {
      * bb add com-type --path /serial --baud 9600 --init "INIT_CMD" --init-response "/OK/"
      */
     addType() {
-        if(!this.config.path) {
-            // TODO: Share the types and utils from blackbox-cli.
-            logerror("Please provide a path for the com using --path.")
-            return
+        if(!this.openapiDoc['x-bb-com-types']) {
+            this.openapiDoc['x-bb-com-types'] = {}
         }
-        const path = this.openapiDoc.paths[this.config.path]
-        if(!path) {
-            logerror(`Path ${this.config.path} not found in OpenAPI document.`)
-            return
-        }
-        path['x-bb-com-type'] = {
-            name: this.config.name,
+        this.openapiDoc['x-bb-com-types'][this.config.name] = {
             baud: this.config.baud,
             initCommands: this.config.initCommands.split(';'),
             initResponses: this.parseResponses(this.config.initResponses)
         }
-        logp(`Added com type 'serial' at path '${this.config.path}' with baud rate ${path['x-bb-com-type'].baud}.`)
+        logp(`Added com type '${this.config.name}'.`)
     }
 
     /**
@@ -75,7 +67,12 @@ export default class BBComExtension {
             logerror("Please provide a path for the macro using --path.")
             return
         }
-        const path = this.openapiDoc.paths[this.config.path]
+        const openApiPath = this.blackboxToOpenapiPath(this.config.path)
+        if(!openApiPath) {
+            logerror(`Path ${this.config.path} not found in OpenAPI document.`)
+            return
+        }
+        const path = this.openapiDoc.paths[openApiPath]
         if(!path) {
             logerror(`Path ${this.config.path} not found in OpenAPI document.`)
             return
@@ -94,10 +91,8 @@ export default class BBComExtension {
             return
         }
 
-        // Extract the responses as regular expressions.
-        // Responses will be in the form: /response1/;/response2/;/response3/
-        // although the semi-colons are optional.
         const macroDef = {
+            name: this.config.name,
             commands: this.config.commands.split(';'),
             responses: this.parseResponses(this.config.responses)
         }
@@ -105,41 +100,43 @@ export default class BBComExtension {
         logp(`Added com macro at path '${this.config.path}' with ${macroDef.commands.length} command(s).`)
     }
 
+    /**
+     * Extract the responses as regular expressions.
+     * Responses will be in the form: /response1/;/response2/;/response3/
+     * @param responsesStr 
+     * @returns 
+     */
     private parseResponses(responsesStr: any) {
-        const regex = /(\/[^\/]+\/)/gm
-        let m
-        const responses: string[] = []
-        while ((m = regex.exec(responsesStr)) !== null) {
-            // This is necessary to avoid infinite loops with zero-width matches
-            if (m.index === regex.lastIndex) {
-                regex.lastIndex++
-            }
-
-            // The result can be accessed through the `m`-variable.
-            m.forEach((match, groupIndex) => {
-                console.log(`Found match, group ${groupIndex}: ${match}`)
-                if (groupIndex === 1) {
-                    responses.push(match)
-                }
-            })
+        if(!responsesStr.startsWith('/') || !responsesStr.endsWith('/')) {
+            logerror("Responses must be provided as regular expressions enclosed in slashes (/).")
+            return []
         }
-        return responses
+        return responsesStr.substring(1, responsesStr.length - 1).split('/;/').map( (resp: string) => resp.trim() )
     }
 
     delete(type: string) {
         console.log(`Deleting com of type '${type} - NOT YET IMPLEMENTED.`);
     }
+    
+    blackboxToOpenapiPath(bbPath: string) {
+        for(let p in this.openapiDoc.paths) {
+            if(p.replaceAll(/\{[^}]+\}/gm, '#') === bbPath) {
+                return p
+            }
+        }
+        return undefined
+    }
 
     generate(type: string) {
-        if(type !== 'com-service') {
+        if(type !== 'com-utils') {
             logerror(`Generation for type '${type}' not supported.`)
             return
         }
-        console.log(`Generating service for com of type '${type}...' `)
 
         // Create ComPort.ts if it doesn't exist:
         if(!fs.existsSync('gensrc/ComPort.ts')) {
             fs.writeFileSync('gensrc/ComPort.ts', comPortTemplate())
+            logp("Generated gensrc/ComPort.ts for serial communications.")
         }
 
         // Add serialport to package.json dependencies if not already present:
@@ -150,14 +147,13 @@ export default class BBComExtension {
         if(!packageJson.dependencies['serialport']) {
             packageJson.dependencies['serialport'] = '^13.0.0'
             fs.writeFileSync('package.json', JSON.stringify(packageJson, null, 2))
-            logp("Added 'serialport' to package.json dependencies.")
+            logp("Added 'serialport' to package.json dependencies.\nPlease run 'npm install' to install the new dependency.")
         }
-
+/*
         // Generate services for each path with a com-type:
         Object.keys(this.openapiDoc.paths).forEach( path => {
-            if(!this.openapiDoc.paths[path]['x-bb-com-type']) {
-                return
-            }
+
+            // Skip if the service file already exists:
             const serviceName = path.substring(path.lastIndexOf('/')+1)
             const serviceFileName = `src/${serviceName.charAt(0).toUpperCase() + serviceName.slice(1)}Service.ts`
             if(fs.existsSync(serviceFileName)) {
@@ -165,27 +161,59 @@ export default class BBComExtension {
                 return
             }
 
+            const parentPathObj = this.openapiDoc.paths[path]
+            const comType = parentPathObj['x-bb-com-type']
+            if(!comType) {
+                return
+            }
+
+            // Extract methods for the parent service node:
+            const methods = Object.keys(parentPathObj)
+                .filter((method: string) => ['get', 'post', 'put', 'delete', 'patch'].includes(method.toLowerCase()))
+                .reduce((methods: any[], method) => {
+                    if (parentPathObj[method]['x-bb-com-macro']) {
+                        const operationId = parentPathObj[method].operationId
+                        methods.push({
+                            path,
+                            method,
+                            operationId
+                        })
+                    }
+                    return methods
+                }, [])
+
+            // Extract methods for the child object nodes:
+            if(parentPathObj['x-bb-service']?.access !== 'unique') {
+                Object.keys(this.openapiDoc.paths)
+                    .filter( p => p.startsWith(path+'/') ) // child nodes
+                    .forEach( p => {
+                        const pathObj = this.openapiDoc.paths[p]
+                        Object.keys(pathObj)
+                        .filter((method: string) => ['get', 'post', 'put', 'delete', 'patch'].includes(method.toLowerCase()))
+                        .filter( method => !pathObj[method]['x-bb-com-macro']?.name || pathObj[method]['x-bb-com-macro'].name === comType.name) // Either the name is not specific (default to parent) or it matches the com-type name of the parent.
+                        .forEach( method => {
+                            if (pathObj[method]['x-bb-com-macro']) {
+                                const operationId = pathObj[method].operationId
+                                methods.push({
+                                    path: p,
+                                    method,
+                                    operationId
+                                })
+                            }
+                        })
+                    })
+            }
+
+            // Generate service code:
             const serviceCode = serviceTemplate(this.openapiDoc, {
                 serviceName,
-                bbName: this.openapiDoc.paths[path]['x-bb-com-type'].name,
-                methods: 
-                    Object.keys(this.openapiDoc.paths[path])
-                    .filter((method:string) => ['get','post','put','delete','patch'].includes(method.toLowerCase()))
-                    .reduce( (methods: any[], method) => {
-                        if(this.openapiDoc.paths[path][method]['x-bb-com-macro']) {
-                            const operationId = this.openapiDoc.paths[path][method].operationId
-                            methods.push({
-                                path, 
-                                method,
-                                operationId
-                            })
-                        }
-                        return methods
-                    }, [])
+                bbName: comType.name,
+                methods: methods
             })
-            fs.writeFileSync(serviceFileName, serviceCode)
 
+            // Write service file:
+            fs.writeFileSync(serviceFileName, serviceCode)
             logp(`Generated com service class ${serviceFileName}.`)
-        })
+        })*/
     }
 }

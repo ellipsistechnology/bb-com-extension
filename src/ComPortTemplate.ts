@@ -2,7 +2,7 @@ export default function comPortTemplate() {
     return `import { SerialPort } from 'serialport';
 import {autowired, named} from 'ellipsis-ioc'
 
-class ComType {
+export class ComType {
   constructor(
     public name: string,
     public baud: number,
@@ -15,12 +15,12 @@ class ComType {
   toString() {
     return \`ComType(name='\${this.name}', baud=\${this.baud})\`
     + \`[\${Object.entries(this.methods).map(([m, macros]) => (
-      \`\n\t\${m}: [\${macros.map(cm => cm.toString()).join(', ')}]\`
-    )).join('')}\n]\`
+      \`\\n\t\${m}: [\${macros.map(cm => cm.toString()).join(', ')}]\`
+    )).join('')}\\n]\`
   }
 }
 
-class ComMacro {
+export class ComMacro {
   constructor(
     public command: string,
     public response: RegExp
@@ -31,7 +31,7 @@ class ComMacro {
   }
 }
 
-class ComPort {
+export class ComPort {
   private port: SerialPort | null = null
   private readMatch?: RegExp
   private readComplete = false
@@ -41,7 +41,7 @@ class ComPort {
   type: ComType | null = null
   lastError: string | null = null
   timeout: number = 5000 // TODO: Allow setting this at the service level and at the method level.
-  lineEnding: string = '\n' // TODO: Allow setting this at the service level and at the method level.
+  lineEnding: string = '\\n' // TODO: Allow setting this at the service level and at the method level.
 
   // General port info:
   manufacturer?: string
@@ -229,41 +229,107 @@ class ComPort {
     console.log(\`Port \${this.path} is now available.\`)
   }
 
-
   /**
    * Executes the macros for the given method while the responses are matched.
    * After execution the com port's state will be 'background'.
    * @param method The method name to execute.
+   * @param params The parameters to replace in the macro commands.
    * @return An array of the responses from each command.
    */
-  async send(method: string): Promise<string[]>
+  async send(method: string, params?: {[name: string]: any}): Promise<string[]>
   
   /**
    * Executes the given macros while the responses are matched.
    * After execution the com port's state will be 'background'.
    * @param macros The array of macros to execute.
+   * @param params The parameters to replace in the macro commands.
    * @return An array of the responses from each command.
    */
-  async send(macros: ComMacro[]): Promise<string[]>
+  async send(macros: ComMacro[], params?: {[name: string]: any}): Promise<string[]>
   
-  async send(macros: ComMacro[]|string): Promise<string[]> {
+  async send(macros: ComMacro[]|string, params?: {[name: string]: any}): Promise<string[]> {
+    
     if(typeof macros === 'string') {
       if(!this.type) {
         throw new Error(\`Cannot send to com port \${this.path} by method without a type.\`)
       }
       console.log(\`Sending macros for method '\${macros}' on port \${this.path}.\`)
-      return this.send(this.type.methods[macros])
+      return this.send(this.type.methods[macros], params)
+    }
+
+    if(!macros || macros.length === 0) {
+      throw new Error(\`No macros provided to send to com port \${this.path}.\`)
     }
 
     // Ensure correct state:
-    if(this.state === 'busy') {
-      throw new Error(\`Com port \${this.path} is busy.\`)
-    }
-    if(this.state === 'connecting') {
-      throw new Error(\`Com port not read - please wait for connection to complete before sending.\`)
-    }
-    if(this.state === 'closed') {
-      throw new Error(\`Com port is closed - please connect before sending.\`)
+    // if(this.state === 'busy') {
+    //   throw new Error(\`Com port \${this.path} is busy.\`)
+    // }
+    // if(this.state === 'connecting') {
+    //   throw new Error(\`Com port not read - please wait for connection to complete before sending.\`)
+    // }
+    // if(this.state === 'closed') {
+    //   throw new Error(\`Com port is closed - please connect before sending.\`)
+    // }
+    
+    // Replace parameters in each macro command:
+    if(params) {
+      macros = macros.map( m => {
+        let command = m.command
+
+        // Extract all parameters in the command.
+        // These have the form {param}:
+        const paramRegex = \/{([^}]+)}\/gm
+        let match
+        const commandParams: string[] = []
+        while ((match = paramRegex.exec(command)) !== null) {
+          // This is necessary to avoid infinite loops with zero-width matches
+          if (match.index === paramRegex.lastIndex) {
+            paramRegex.lastIndex++
+          }
+
+          // The result can be accessed through the 'match'-variable.
+          match.forEach((m, groupIndex) => {
+            if (groupIndex === 1) {
+              commandParams.push(m)
+            }
+          })
+        }
+
+        // Replace each parameter with its value:
+        commandParams.forEach( p => {
+          const re = new RegExp(\`{\${p}}\`, 'g')
+          let val
+
+          // Resolve nested parameters:
+          if(p.includes('.')) {
+            val = params[p.substring(0, p.indexOf('.'))] // get top-level value
+            const keys = p.split('.')
+            for(let key of keys) {
+              // Check for the property:
+              if(val && val.hasOwnProperty(key)) {
+                val = val[key as any]
+              } 
+              // Check if the property has an array index:
+              else if(key.endsWith(']') && key.includes('[') ) {
+                const arrKey = key.substring(0, key.indexOf('[')) as any
+                const indexStr = key.substring(key.indexOf('[')+1, key.length-1)
+                const index = parseInt(indexStr)
+                if(val && val.hasOwnProperty(arrKey) && Array.isArray(val[arrKey]) && val[arrKey].length > index) {
+                  val = val[arrKey][index]
+                }
+              } 
+              // else not found.
+            }
+          } else {
+            val = params[p]
+          }
+          
+          command = command.replaceAll(re, val)
+        })
+
+        return new ComMacro(command, m.response)
+      })
     }
 
     // Wait for port the become available:
@@ -324,7 +390,7 @@ class ComPort {
 }
   
 @named('com-manager')
-class ComManager {
+export class ComManager {
   ports: ComPort[] = []
   types: ComType[] = []
 
@@ -394,64 +460,96 @@ class ComManager {
             }
           }
         })
-        console.log(\`Found ports: \n\t\${this.ports.map(p => p.toString()).join(',\n\t')}\`);
+        console.log(\`Found ports: \\n\\t\${this.ports.map(p => p.toString()).join(',\\n\\t')}\`);
     } catch (error: any) {
         console.error(\`Error scanning serial ports: \${error.message}\`)
     }
   }
 
+  /**
+   * Load the com types from the OpenAPI document.
+   * @returns 
+   */
   loadTypes() {
-    Object.keys(this.openapiDoc.paths).forEach( (p:any) => {
-      const path = this.openapiDoc.paths[p]
-      if(path['x-bb-com-type']) {
-        let baud = path['x-bb-com-type'].baud
-        if(typeof baud === 'string') {
-          baud = parseInt(baud)
-        }
+    if(!this.openapiDoc['x-bb-com-types']) {
+      console.log("No com types found in OpenAPI document.")
+      return
+    }
 
-        // Methd macros:
-        const methods = {} as {[method: string]: any}
+    // Iterate over all com types in the OpenAPI document:
+    Object.keys(this.openapiDoc['x-bb-com-types']).forEach( (name: string) => {
+      const comType = this.openapiDoc['x-bb-com-types'][name]
+
+      // Ensure the baud rate is a number:
+      if(typeof comType.baud === 'string') {
+        comType.baud = parseInt(comType.baud)
+      }
+
+      // Extract all macros that specify this com type by name:
+      const macros = {} as {[method: string]: ComMacro[]}
+      Object.values(this.openapiDoc.paths).forEach( (path: any) => {
         Object.keys(path)
-        .filter(m => ['get', 'post', 'put', 'patch', 'delete'].includes(m))
-        .filter(m => path[m]['x-bb-com-macro'])
-        .forEach(m => {
-          if(!path[m]['x-bb-com-macro'].commands ||
-            !path[m]['x-bb-com-macro'].responses ||
-            path[m]['x-bb-com-macro'].commands.length !== path[m]['x-bb-com-macro'].responses.length) 
+        .filter(method => ['get', 'post', 'put', 'patch', 'delete'].includes(method))
+        .filter(method => path[method]['x-bb-com-macro'])
+        .forEach(method => {
+          if(!path[method]['x-bb-com-macro'].commands ||
+            !path[method]['x-bb-com-macro'].responses ||
+            path[method]['x-bb-com-macro'].commands.length !== path[method]['x-bb-com-macro'].responses.length) 
           {
-            throw new Error(\`x-bb-com-macro commands and responses must be arrays of the same length in openapi.json at path \${p}.\`)
+            throw new Error('x-bb-com-macro commands and responses must be arrays of the same length in openapi.json at path '+path+'/'+method+'.')
           }
-          methods[m] = (<string[]>path[m]['x-bb-com-macro'].commands).map((c, i) => (
-            new ComMacro(c, new RegExp(path[m]['x-bb-com-macro'].responses[i], 'gm'))
+          if(!path[method].operationId) {
+            throw new Error(\`OperationId missing for method \${method} at path \${path} in openapi.json.\`)
+          }
+          macros[path[method].operationId] = (path[method]['x-bb-com-macro'].commands as string[]).map((c, i) => (
+            new ComMacro(c, new RegExp(path[method]['x-bb-com-macro'].responses[i].replace(/^\/|\/$/g, ''), 'gm'))
           ))
         })
+      })
 
-        // Init macro:
-        path['x-bb-com-type'].initCommands.forEach((cmd: string, i: number) => {
-          if(!methods.init) {
-            methods.init = []
-          }
-          methods.init.push(
-            new ComMacro(
-              cmd,
-              new RegExp(path['x-bb-com-type'].initResponses[i].replace(/^\/|\/$/g, '')) // remove leading and trailing slashes
-            )
-          )
-        })
-        if(!methods.init) {
-          throw new Error(\`Com type at path \${p} is missing init commands.\`)
-        }
-
-        const comType = new ComType(
-          path['x-bb-com-type'].name,
-          baud,
-          methods as {[method: string]: ComMacro[], init: ComMacro[]}
-        )
-        console.log(\`Loaded com type \${comType.toString()}\`);
-        
-        this.types.push(comType)
+      // Init macro:
+      if(!comType.initCommands || comType.initCommands.length === 0) {
+        throw new Error(\`Com type '\${name}' is missing init commands.\`)
       }
+      if(!comType.initResponses || comType.initResponses.length === 0) {
+        throw new Error(\`Com type '\${name}' is missing init responses.\`)
+      }
+      if(comType.initCommands.length !== comType.initResponses.length) {
+        throw new Error(\`Com type '\${name}' init commands and responses must be arrays of the same length.\`)
+      }
+      macros.init = []
+      comType.initCommands.forEach((cmd: string, i: number) => {
+        macros.init.push(
+          new ComMacro(
+            cmd,
+            new RegExp(comType.initResponses[i].replace(/^\/|\/$/g, '')) // remove leading and trailing slashes
+          )
+        )
+      })
+      
+      // Add the com type:
+      this.types.push(new ComType(
+        name,
+        comType.baud,
+        macros as {[method: string]: ComMacro[], init: ComMacro[]}
+      ))
+      console.log(\`Loaded com type \${comType.toString()}\`);
     })
+  }
+
+  async list(type: string, operationId: string, params: {[key: string]: any}): Promise<string[][]> {
+    const results: string[][] = []
+    const ports = this.ports.filter(p => p.type?.name === type)
+    for(let index = 0; index < ports.length; index++) {
+        results.push(await this.send(type, index, operationId, params))
+    }
+    return results
+  }
+
+  async send(type: string, index: number, operationId: string, params: {[key: string]: any}): Promise<string[]> {
+    const port = await this.getComPort(type, index)
+    const responses = await port.send(operationId, params)
+    return responses
   }
 }
 `

@@ -1,4 +1,10 @@
-import { jsonTypes, reservedClasses, schemaToClassMap, toCammelCase } from './utils.js'
+export default function () {
+  return `import {serviceClass, autowired} from 'ellipsis-ioc'
+import { ComManager } from '../gensrc/ComPort.js'
+`
+}
+
+/*import { jsonTypes, reservedClasses, schemaToClassMap, toCammelCase } from './utils.js'
 
 export interface TemplateMap {
   serviceName:string,
@@ -11,7 +17,7 @@ export interface TemplateMap {
 }
 
 function methodType(oasDoc: any, path: string, method: string, schemaToClass: { [key:string]: string }): string {
-  // If there is no response content then default to 'any':
+  // If there is no response content then default to 'void':
   if(!oasDoc.paths[path][method].responses?.['200']?.content) {
     return 'void'
   }
@@ -45,17 +51,16 @@ function methodType(oasDoc: any, path: string, method: string, schemaToClass: { 
   } else if(type) {
     return type
   } else {
-console.log(`No type found for ${method} ${path}, defaulting to 'void'.`);
     return 'void'
   }
 }
 
 export default function (openapiDoc: any, {bbName, serviceName, methods}:TemplateMap):string {
-
   const className = toCammelCase(serviceName)
   const classVarName = toCammelCase(serviceName, false)
   const schemaToClass = schemaToClassMap(openapiDoc)
 
+  // Build import list:
   let imports = ''
   new Set(methods // use a set to remove duplicates
     .map(method => methodType(openapiDoc, method.path, method.method, schemaToClass)) // extract types from methods
@@ -97,8 +102,15 @@ export class ${className}Service {
     const returnType = methodType(openapiDoc, method.path, method.method, schemaToClass)
     return `
   async ${method.operationId}(${pathParamsList}${pathParams.length > 0 ? ': ' : ''}${pathParamTypes}): Promise<${returnType}> {
-    const port = await this.comManager.getComPort('${bbName}', 0)
-    const responses = await port.send('${method.method}')
+    ${method.operationId.endsWith('List') ? 
+    `for(let index = 0; index < this.comManager.ports.length; index++) {
+      const port = await this.comManager.getComPort('${bbName}', 0)
+      const responses = await port.send('${method.operationId}'${pathParamsList ? ', ' + pathParamsList : '' })
+      console.log('Response from port:', responses)
+    }` : 
+    `const port = await this.comManager.getComPort('${bbName}', 0)
+    const responses = await port.send('${method.operationId}'${pathParamsList ? ', ' + pathParamsList : '' })
+    console.log('Response from port:', responses)`}
 
     // TODO: Process responses to extract data.
 
@@ -107,3 +119,4 @@ export class ${className}Service {
 }
 `
 }
+*/
