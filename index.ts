@@ -1,6 +1,5 @@
 import fs from 'fs'
 import comPortTemplate from './src/ComPortTemplate.js'
-import serviceTemplate from './src/serviceTemplate.js'
 
 function logp(message: string) {
     console.log(message)
