@@ -13,8 +13,9 @@ __webpack_require__.r(__webpack_exports__);
 /* harmony export */   "default": () => (/* binding */ comPortTemplate)
 /* harmony export */ });
 function comPortTemplate() {
-    return `import { SerialPort } from 'serialport';
+    return `import { SerialPort } from 'serialport'
 import {autowired, named} from 'ellipsis-ioc'
+import { NotFound, RequestTimeout } from './HttpError.js'
 
 export class ComType {
   constructor(
@@ -144,7 +145,7 @@ export class ComPort {
     return new Promise<string>((resolve, reject) => {
       const checkCompletion = () => {
         if( Date.now() - time > this.timeout) {
-          reject(new Error(\`Timeout after \${this.timeout}ms\`))
+          reject(new RequestTimeout(\`Timeout after \${this.timeout}ms while reading from port \${this.path}.\`))
           return
         }
         if (this.readComplete) {
@@ -225,7 +226,7 @@ export class ComPort {
       attempt++
     }
     if(this.state === 'connecting') {
-      throw new Error(\`Timeout while waiting for connection to complete.\`)
+      throw new RequestTimeout(\`Timeout while waiting for connection to complete.\`)
     }
     console.log(\`Port \${this.path} connected.\`)
 
@@ -238,7 +239,7 @@ export class ComPort {
       attempt++
     }
     if(this.state === 'busy') {
-      throw new Error(\`Timeout while waiting for port to become available.\`)
+      throw new RequestTimeout(\`Timeout while waiting for port to become available.\`)
     }
     console.log(\`Port \${this.path} is now available.\`)
   }
@@ -432,7 +433,7 @@ export class ComManager {
 
     // Make sure the port exists and has a known type:
     if(index >= typePorts.length) {
-      throw new Error(\`Port with index \${index} not found. \${typePorts.length} ports found of type \${typeName}.\`)
+      throw new NotFound(\`Port with index \${index} not found. \${typePorts.length} ports found of type \${typeName}.\`)
     }
 
     return typePorts[index]
@@ -516,7 +517,7 @@ export class ComManager {
             throw new Error(\`OperationId missing for method \${method} at path \${path} in openapi.json.\`)
           }
           macros[path[method].operationId] = (path[method]['x-bb-com-macro'].commands as string[]).map((c, i) => (
-            new ComMacro(c, new RegExp(path[method]['x-bb-com-macro'].responses[i].replace(/^\/|\/$/g, ''), 'gm'))
+            new ComMacro(c, new RegExp(path[method]['x-bb-com-macro'].responses[i].replace(/^\\/|\\/$/g, ''), 'gm'))
           ))
         })
       })
@@ -536,7 +537,7 @@ export class ComManager {
         macros.init.push(
           new ComMacro(
             cmd,
-            new RegExp(comType.initResponses[i].replace(/^\/|\/$/g, '')) // remove leading and trailing slashes
+            new RegExp(comType.initResponses[i].replace(/^\\/|\\/$/g, '')) // remove leading and trailing slashes
           )
         )
       })

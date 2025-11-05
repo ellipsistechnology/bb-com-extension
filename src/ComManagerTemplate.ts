@@ -1,4 +1,4 @@
-export default function comPortTemplate() {
+export default function () {
     return `import { SerialPort } from 'serialport'
 import {autowired, named} from 'ellipsis-ioc'
 import { NotFound, RequestTimeout } from './HttpError.js'
@@ -7,15 +7,15 @@ export class ComType {
   constructor(
     public name: string,
     public baud: number,
-    public methods: {
+    public macros: {
       init: ComMacro[],
-      [method: string]: ComMacro[]
+      [operationId: string]: ComMacro[]
     }
   ) {}
 
   toString() {
     return \`ComType(name='\${this.name}', baud=\${this.baud})\`
-    + \`[\${Object.entries(this.methods).map(([m, macros]) => (
+    + \`[\${Object.entries(this.macros).map(([m, macros]) => (
       \`\\n\t\${m}: [\${macros.map(cm => cm.toString()).join(', ')}]\`
     )).join('')}\\n]\`
   }
@@ -61,7 +61,7 @@ export class ComPort {
   async setType(type: ComType): Promise<boolean> {
     try {
       await this.connect(type.baud) // throws an error if connection fails
-      await this.send(type.methods.init)
+      await this.send(type.macros.init)
       if(this.readComplete) {
         this.type = type
         return true
@@ -137,7 +137,6 @@ export class ComPort {
         if (this.readComplete) {
           resolve(this.buffer.trim())
         } else if (this.lastError) {
-          
           reject(new Error(this.lastError))
         } else {
           setTimeout(() => {
@@ -233,11 +232,11 @@ export class ComPort {
   /**
    * Executes the macros for the given method while the responses are matched.
    * After execution the com port's state will be 'background'.
-   * @param method The method name to execute.
+   * @param operationId The operationId name to execute.
    * @param params The parameters to replace in the macro commands.
    * @return An array of the responses from each command.
    */
-  async send(method: string, params?: {[name: string]: any}): Promise<string[]>
+  async send(operationId: string, params?: {[name: string]: any}): Promise<string[]>
   
   /**
    * Executes the given macros while the responses are matched.
@@ -248,19 +247,21 @@ export class ComPort {
    */
   async send(macros: ComMacro[], params?: {[name: string]: any}): Promise<string[]>
   
-  async send(macros: ComMacro[]|string, params?: {[name: string]: any}): Promise<string[]> {
+  async send(macros_operationId: ComMacro[]|string, params?: {[name: string]: any}): Promise<string[]> {
     
-    if(typeof macros === 'string') {
+    if(typeof macros_operationId === 'string') {
       if(!this.type) {
-        throw new Error(\`Cannot send to com port \${this.path} by method without a type.\`)
+        throw new Error(\`Cannot send to com port \${this.path} by operationId without a type.\`)
       }
-      console.log(\`Sending macros for method '\${macros}' on port \${this.path}.\`)
-      return this.send(this.type.methods[macros], params)
+      console.log(\`Sending macros for operationId '\${macros_operationId}' on port \${this.path}.\`)
+      return this.send(this.type.macros[macros_operationId], params)
     }
 
-    if(!macros || macros.length === 0) {
+    if(!macros_operationId || macros_operationId.length === 0) {
       throw new Error(\`No macros provided to send to com port \${this.path}.\`)
     }
+
+    let macros = macros_operationId as ComMacro[]
 
     // Ensure correct state:
     // if(this.state === 'busy') {
@@ -397,6 +398,8 @@ export class ComManager {
 
   @autowired('openapi-doc')
   openapiDoc:any
+  
+  private refreshInterval: NodeJS.Timeout | null = null
 
   constructor() {
     setTimeout(() => {
@@ -407,10 +410,26 @@ export class ComManager {
   init() {
     this.loadTypes()
     this.scanPorts()
+    .then(() => {
+      console.log("ComManager initialized.")
+      this.scheduleRefresh()
+    })
     .catch((err) => {
       console.error("Error initializing ComManager: ", err)
       setTimeout(() => this.init(), 1000) // retry
     })
+  }
+
+  private scheduleRefresh() {
+    if(this.refreshInterval) {
+      clearInterval(this.refreshInterval)
+    }
+    this.refreshInterval = setInterval(() => {
+      this.scanPorts()
+      .catch((err) => {
+        console.error("Error scanning ports: ", err)
+      })
+    }, 60000) // every 60 seconds
   }
 
   // TODO: Allow access by ID instead of index - devices will need a name for this.
@@ -429,7 +448,33 @@ export class ComManager {
     console.log(\`Scanning serial ports...\`)
     try {
         const ports = await SerialPort.list()
-        ports.forEach(async p => {
+        await Promise.all(ports.map(async p => {
+          // Send hello message to existing ports:
+          const existingPort = this.ports.find(existing => existing.path === p.path)
+          if(existingPort && existingPort.type) {
+            try {
+              console.log(\`Sending hello message to port \${existingPort.path} of type \${existingPort.type?.name}...\`);
+              await existingPort.send('init')
+              console.log(\`Response received from port \${existingPort.path}.\`);
+            } catch(err) {
+              console.log(\`Port \${existingPort.path} of type \${existingPort.type?.name} is not responding.\`)
+              
+              // Close the port if open:
+              if(existingPort.state !== 'closed') {
+                await existingPort.close()
+              }
+            }
+
+            return
+          }
+
+          // Remove existing ports of unknown type so that we can try again:
+          if(existingPort && !existingPort.type) {
+            console.log(\`Removing existing port \${existingPort.path} of unknown type for re-detection.\`)
+            this.ports = this.ports.filter(p => p.path !== existingPort.path)
+          }
+
+          // Add new port:
           const port = new ComPort(p.path)
 
           port.path = p.path
@@ -453,6 +498,10 @@ export class ComManager {
               // If the type was set without error, then the port
               // supports this type:
               console.log(\`Com port of type \${type.name} found at path \${port.path}\`)
+
+              // Open the port for background use:
+              await port.connect()
+
               break
             } catch(err) {
               console.log(\`Failed to add type to port: \${port.toString()}\`)
@@ -460,8 +509,8 @@ export class ComManager {
               continue
             }
           }
-        })
-        console.log(\`Found ports: \\n\\t\${this.ports.map(p => p.toString()).join(',\\n\\t')}\`);
+        }))
+        console.log(\`Com ports: \\n\\t\${this.ports.map(p => p.toString()).join(',\\n\\t')}\`);
     } catch (error: any) {
         console.error(\`Error scanning serial ports: \${error.message}\`)
     }
@@ -503,7 +552,7 @@ export class ComManager {
             throw new Error(\`OperationId missing for method \${method} at path \${path} in openapi.json.\`)
           }
           macros[path[method].operationId] = (path[method]['x-bb-com-macro'].commands as string[]).map((c, i) => (
-            new ComMacro(c, new RegExp(path[method]['x-bb-com-macro'].responses[i].replace(/^\/|\/$/g, ''), 'gm'))
+            new ComMacro(c, new RegExp(path[method]['x-bb-com-macro'].responses[i].replace(/^\\/|\\/$/g, ''), 'gm'))
           ))
         })
       })
@@ -523,7 +572,7 @@ export class ComManager {
         macros.init.push(
           new ComMacro(
             cmd,
-            new RegExp(comType.initResponses[i].replace(/^\/|\/$/g, '')) // remove leading and trailing slashes
+            new RegExp(comType.initResponses[i].replace(/^\\/|\\/$/g, '')) // remove leading and trailing slashes
           )
         )
       })

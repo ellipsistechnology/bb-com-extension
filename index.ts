@@ -1,5 +1,5 @@
 import fs from 'fs'
-import comPortTemplate from './src/ComPortTemplate.js'
+import comManagerTemplate from './src/ComManagerTemplate.js'
 
 function logp(message: string) {
     console.log(message)
@@ -134,7 +134,7 @@ export default class BBComExtension {
 
         // Create ComPort.ts if it doesn't exist:
         if(!fs.existsSync('gensrc/ComPort.ts')) {
-            fs.writeFileSync('gensrc/ComPort.ts', comPortTemplate())
+            fs.writeFileSync('gensrc/ComManager.ts', comManagerTemplate())
             logp("Generated gensrc/ComPort.ts for serial communications.")
         }
 
