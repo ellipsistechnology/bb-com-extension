@@ -1,0 +1,9 @@
+{
+    "exec": "tsc && webpack && cp bundle/index.js ../csiro-glombo/.bb/extensions/bb-com-extension-index.js",
+    "ext": "ts,json",
+    "ignore": [
+        "dist/*",
+        "node_modules/*",
+        "test/*"
+    ]
+}

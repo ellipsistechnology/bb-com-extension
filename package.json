@@ -5,7 +5,7 @@
   "description": "Blackbox extension to allow creation of com port based services.",
   "main": "index.ts",
   "scripts": {
-    "dev-build": "nodemon --watch index.ts --watch 'src/serviceTemplate.ts' --watch '/src/ComPortTemplate.ts' --exec \"tsc && webpack && cp bundle/index.js ../csiro-glombo/.bb/extensions/bb-com-extension-index.js\"",
+    "dev-build": "nodemon",
     "build": "tsc && webpack && cp bundle/index.js ../blackbox-cli/test/iot/.bb/extensions/bb-com-extension-index.js"
   },
   "author": "Ben Millar",
