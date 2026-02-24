@@ -1,9 +1,9 @@
 {
   "name": "bb-com-extension",
   "type": "module",
-  "version": "0.0.1",
+  "version": "0.1.1",
   "description": "Blackbox extension to allow creation of com port based services.",
-  "main": "index.ts",
+  "main": "bundle/index.js",
   "scripts": {
     "dev-build": "nodemon",
     "build": "tsc && webpack",
