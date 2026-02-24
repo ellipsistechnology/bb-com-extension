@@ -1,5 +1,5 @@
 import fs from 'fs'
-import comManagerTemplate from './src/ComManagerTemplate.js'
+import comLoaderTemplate from './src/ComLoaderTemplate.js'
 
 function logp(message: string) {
     console.log(message)
@@ -30,7 +30,8 @@ export default class BBComExtension {
                 '--commands <string>': 'The sequence of commands to send in the macro, separated by semicolons.',
                 '--responses <string>': 'Expected responses for each command given as regular expressions, separated by semicolons.',
                 '--baud <string>': 'The baud rate for the serial connection.',
-                '--method <string>': 'The HTTP method to use (GET, POST, etc.) for a macro.'
+                '--method <string>': 'The HTTP method to use (GET, POST, etc.) for a macro.',
+                '--startup-delay <number>': 'Optional delay in milliseconds to wait after opening the port before sending the init commands, to allow devices extra time to boot up.'
             }
         }
     }
@@ -52,6 +53,7 @@ export default class BBComExtension {
         }
         this.openapiDoc['x-bb-com-types'][this.config.name] = {
             baud: this.config.baud,
+            startupDelay: this.config.startupDelay,
             initCommands: this.config.initCommands.split(';'),
             initResponses: this.parseResponses(this.config.initResponses)
         }
@@ -132,21 +134,21 @@ export default class BBComExtension {
             return
         }
 
-        // Create ComPort.ts if it doesn't exist:
-        if(!fs.existsSync('gensrc/ComPort.ts')) {
-            fs.writeFileSync('gensrc/ComManager.ts', comManagerTemplate())
-            logp("Generated gensrc/ComPort.ts for serial communications.")
+        // Create ComManager.ts if it doesn't exist:
+        if(!fs.existsSync('gensrc/ComLoader.ts')) {
+            fs.writeFileSync('gensrc/ComLoader.ts', comLoaderTemplate())
+            logp("Generated gensrc/ComLoader.ts for serial communications.")
         }
 
-        // Add serialport to package.json dependencies if not already present:
+        // Add ellipsis-com to package.json dependencies if not already present:
         const packageJson = JSON.parse(fs.readFileSync('package.json', 'utf-8'))
         if(!packageJson.dependencies) {
             packageJson.dependencies = {}
         }
-        if(!packageJson.dependencies['serialport']) {
-            packageJson.dependencies['serialport'] = '^13.0.0'
+        if(!packageJson.dependencies['ellipsis-com']) {
+            packageJson.dependencies['ellipsis-com'] = '^0.1.0'
             fs.writeFileSync('package.json', JSON.stringify(packageJson, null, 2))
-            logp("Added 'serialport' to package.json dependencies.\nPlease run 'npm install' to install the new dependency.")
+            logp("Added 'ellipsis-com' to package.json dependencies.\nPlease run 'npm install' to install the new dependency.")
         }
 /*
         // Generate services for each path with a com-type:

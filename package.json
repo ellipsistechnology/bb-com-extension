@@ -6,7 +6,8 @@
   "main": "index.ts",
   "scripts": {
     "dev-build": "nodemon",
-    "build": "tsc && webpack && cp bundle/index.js ../blackbox-cli/test/iot/.bb/extensions/bb-com-extension-index.js"
+    "build": "tsc && webpack",
+    "test": "jest"
   },
   "author": "Ben Millar",
   "license": "ISC",
