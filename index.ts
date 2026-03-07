@@ -93,7 +93,7 @@ export default class BBComExtension {
         }
 
         const macroDef = {
-            name: this.config.name,
+            type: this.config.name,
             commands: this.config.commands.split(';'),
             responses: this.parseResponses(this.config.responses)
         }

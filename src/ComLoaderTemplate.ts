@@ -60,7 +60,7 @@ export class ComLoader {
       Object.values(this.openapiDoc.paths).forEach( (path: any) => {
         Object.keys(path)
         .filter(method => ['get', 'post', 'put', 'patch', 'delete'].includes(method))
-        .filter(method => path[method]['x-bb-com-macro'])
+        .filter(method => path[method]['x-bb-com-macro']?.type === name)
         .forEach(method => {
           if(!path[method]['x-bb-com-macro'].commands ||
             !path[method]['x-bb-com-macro'].responses ||
