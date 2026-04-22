@@ -108,11 +108,11 @@ export default class BBComExtension {
      * @returns 
      */
     private parseResponses(responsesStr: any) {
-        if(!responsesStr.startsWith('/') || !responsesStr.endsWith('/')) {
+        if(!responsesStr.startsWith('/')) {
             logerror("Responses must be provided as regular expressions enclosed in slashes (/).")
             return []
         }
-        return responsesStr.substring(1, responsesStr.length - 1).split('/;/').map( (resp: string) => resp.trim() )
+        return responsesStr.split(';').map( (resp: string) => resp.trim() )
     }
 
     delete(type: string) {
